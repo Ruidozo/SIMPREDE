@@ -316,7 +316,7 @@ def processar_staging_para_eventos(**context):
     staging_table = staging_info['table_name']
     
     # Query otimizada de inserção com tratamento de conflitos
-    # Formata datas como YYYY/MM/DD
+    # Formata datas como YYYY/MM/DD (convertendo de DD/MM/YYYY)
     insert_query = f"""
         INSERT INTO google_scraper.google_scraper_eventos (
             id, type, subtype, date, year, month, day, hour,
@@ -328,10 +328,10 @@ def processar_staging_para_eventos(**context):
             af.id,
             COALESCE(af.type, 'Other'),
             COALESCE(af.subtype, 'Other'),
-            TO_CHAR(TO_DATE(af.date, 'DD/MM/YYYY'), 'YYYY/MM/DD'),
-            EXTRACT(YEAR FROM TO_DATE(af.date, 'DD/MM/YYYY')),
-            EXTRACT(MONTH FROM TO_DATE(af.date, 'DD/MM/YYYY')),
-            EXTRACT(DAY FROM TO_DATE(af.date, 'DD/MM/YYYY')),
+            TO_CHAR(TO_DATE(af.date, 'DD/MM/YYYY'), 'YYYY/MM/DD')::VARCHAR,
+            EXTRACT(YEAR FROM TO_DATE(af.date, 'DD/MM/YYYY'))::INT,
+            EXTRACT(MONTH FROM TO_DATE(af.date, 'DD/MM/YYYY'))::INT,
+            EXTRACT(DAY FROM TO_DATE(af.date, 'DD/MM/YYYY'))::INT,
             COALESCE(af.hour, '08:00'),
             NULL, NULL, COALESCE(af.georef, 'unknown'),
             COALESCE(af.district, 'unknown'),
@@ -344,7 +344,7 @@ def processar_staging_para_eventos(**context):
             COALESCE(af.displaced, 0),
             COALESCE(af.missing, 0),
             af.source,
-            TO_CHAR(TO_DATE(af.sourcedate, 'DD/MM/YYYY'), 'YYYY/MM/DD'),
+            TO_CHAR(TO_DATE(af.sourcedate, 'DD/MM/YYYY'), 'YYYY/MM/DD')::VARCHAR,
             COALESCE(af.sourcetype, 'news_article'),
             af.page,
             NULL
