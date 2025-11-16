@@ -74,9 +74,11 @@ def query_table(table_name, columns="*", limit_rows=None):
         if limit_rows:
             query += f" LIMIT {limit_rows}"
         df = pd.read_sql(query, engine)
+        print(f"✅ Query successful for {table_name}: {len(df)} rows")
         return df
     except Exception as e:
-        print(f"Erro ao consultar {table_name}: {e}")
+        print(f"❌ Erro ao consultar {table_name}: {e}")
+        print(f"   Query: SELECT {columns} FROM public.{table_name}")
         return pd.DataFrame()
 
 
@@ -225,21 +227,27 @@ st.markdown(f"""
 def carregar_disasters():
     try:
         df = query_table("disasters", "id, year, month, type, subtype, date")
+        print(f"DEBUG: carregar_disasters() - Retrieved {len(df)} rows")
         
         if df.empty or "type" not in df.columns:
-            print(f"Warning: Disasters dataframe vazio. Total registos: {len(df)}")
+            print(f"⚠️ Warning: Disasters dataframe vazio. Total registos: {len(df)}")
             return pd.DataFrame(columns=["id", "year", "month", "type", "subtype", "date"])
         
         # Ensure type column is string and handle nulls
         df["type"] = df["type"].fillna("").astype(str).str.capitalize()
         df = df[df["type"].isin(["Flood", "Landslide"])]
+        print(f"DEBUG: After type filter - {len(df)} rows")
         df["year"] = pd.to_numeric(df["year"], errors="coerce")
         df["month"] = pd.to_numeric(df["month"], errors="coerce")
         df["date"] = pd.to_datetime(df["date"], errors="coerce")
 
-        return df.dropna(subset=["year", "month", "date"])
+        result = df.dropna(subset=["year", "month", "date"])
+        print(f"DEBUG: After dropna - {len(result)} rows")
+        return result
     except Exception as e:
-        print(f"Erro ao carregar disasters: {e}")
+        print(f"❌ Erro ao carregar disasters: {e}")
+        import traceback
+        traceback.print_exc()
         return pd.DataFrame(columns=["id", "year", "month", "type", "subtype", "date"])
 
 @st.cache_data
@@ -263,20 +271,26 @@ def carregar_localizacoes_disasters():
 def carregar_scraper():
     try:
         df = query_table("google_scraper_ocorrencias", "id, type, year, month, latitude, longitude, district")
+        print(f"DEBUG: carregar_scraper() - Retrieved {len(df)} rows")
         
         # Check if dataframe is empty or missing required columns
         if df.empty or "type" not in df.columns:
-            print(f"Warning: Scraper dataframe vazio. Total registos: {len(df)}")
+            print(f"⚠️ Warning: Scraper dataframe vazio. Total registos: {len(df)}")
             return pd.DataFrame(columns=["id", "type", "year", "month", "latitude", "longitude", "district"])
         
         # Ensure type column is string and handle nulls
         df["type"] = df["type"].fillna("").astype(str).str.capitalize()
         df = df[df["type"].isin(["Flood", "Landslide"])]
+        print(f"DEBUG: After type filter - {len(df)} rows")
         df["year"] = pd.to_numeric(df["year"], errors="coerce")
         df["month"] = pd.to_numeric(df["month"], errors="coerce")
-        return df.dropna(subset=["year", "month", "latitude", "longitude"])
+        result = df.dropna(subset=["year", "month", "latitude", "longitude"])
+        print(f"DEBUG: After dropna - {len(result)} rows")
+        return result
     except Exception as e:
-        print(f"Erro ao carregar scraper: {e}")
+        print(f"❌ Erro ao carregar scraper: {e}")
+        import traceback
+        traceback.print_exc()
         return pd.DataFrame(columns=["id", "type", "year", "month", "latitude", "longitude", "district"])
 
 
