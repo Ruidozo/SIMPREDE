@@ -230,7 +230,8 @@ def carregar_disasters():
             print(f"Warning: Disasters dataframe vazio. Total registos: {len(df)}")
             return pd.DataFrame(columns=["id", "year", "month", "type", "subtype", "date"])
         
-        df["type"] = df["type"].str.capitalize()
+        # Ensure type column is string and handle nulls
+        df["type"] = df["type"].fillna("").astype(str).str.capitalize()
         df = df[df["type"].isin(["Flood", "Landslide"])]
         df["year"] = pd.to_numeric(df["year"], errors="coerce")
         df["month"] = pd.to_numeric(df["month"], errors="coerce")
@@ -268,7 +269,8 @@ def carregar_scraper():
             print(f"Warning: Scraper dataframe vazio. Total registos: {len(df)}")
             return pd.DataFrame(columns=["id", "type", "year", "month", "latitude", "longitude", "district"])
         
-        df["type"] = df["type"].str.capitalize()
+        # Ensure type column is string and handle nulls
+        df["type"] = df["type"].fillna("").astype(str).str.capitalize()
         df = df[df["type"].isin(["Flood", "Landslide"])]
         df["year"] = pd.to_numeric(df["year"], errors="coerce")
         df["month"] = pd.to_numeric(df["month"], errors="coerce")
