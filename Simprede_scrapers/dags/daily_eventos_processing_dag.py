@@ -344,7 +344,12 @@ def processar_staging_para_eventos(**context):
             COALESCE(af.displaced, 0),
             COALESCE(af.missing, 0),
             af.source,
-            TO_CHAR(TO_DATE(af.sourcedate, 'DD/MM/YYYY'), 'YYYY/MM/DD')::VARCHAR,
+            CASE 
+                WHEN af.sourcedate IS NOT NULL AND af.sourcedate != '' 
+                     AND af.sourcedate ~ '^[0-9]{{1,2}}/[0-9]{{1,2}}/[0-9]{{4}}$'
+                THEN TO_CHAR(TO_DATE(af.sourcedate, 'DD/MM/YYYY'), 'YYYY/MM/DD')::VARCHAR
+                ELSE TO_CHAR(TO_DATE(af.date, 'DD/MM/YYYY'), 'YYYY/MM/DD')::VARCHAR
+            END,
             COALESCE(af.sourcetype, 'news_article'),
             af.page,
             NULL
