@@ -12,7 +12,7 @@ import streamlit as st
 from dotenv import load_dotenv
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.linear_model import LinearRegression
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 
 # --- Configuração da página (DEVE SER A PRIMEIRA COMANDO STREAMLIT) ---
 st.set_page_config(layout="wide", page_title="SIMPREDE", page_icon="🌍")
@@ -77,7 +77,7 @@ def get_db_engine():
         engine = create_engine(db_url)
         # Test connection
         with engine.connect() as connection:
-            connection.execute("SELECT 1")
+            connection.execute(text("SELECT 1"))
         print(f"✅ Database connection successful!")
         return engine
     except Exception as e:
