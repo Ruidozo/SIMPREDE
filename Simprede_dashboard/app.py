@@ -1,15 +1,18 @@
-import streamlit as st
-import pandas as pd
-import io
-import altair as alt
-import pydeck as pdk
-from supabase import create_client, Client
-from sklearn.linear_model import LinearRegression
-import numpy as np
-import plotly.express as px
-from sklearn.ensemble import RandomForestRegressor
 import base64
+import io
+import os
 from pathlib import Path
+
+import altair as alt
+import numpy as np
+import pandas as pd
+import plotly.express as px
+import pydeck as pdk
+import streamlit as st
+from dotenv import load_dotenv
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.linear_model import LinearRegression
+from sqlalchemy import create_engine
 
 # --- Configuração da página (DEVE SER A PRIMEIRA COMANDO STREAMLIT) ---
 st.set_page_config(layout="wide", page_title="SIMPREDE", page_icon="🌍")
@@ -29,6 +32,7 @@ def get_base64_image(image_path):
         st.warning(f"Image file {image_path} not found at {full_image_path}. Using placeholder.")
         # Criar um PNG transparente simples 1x1 como alternativa
         import io
+
         from PIL import Image
         img = Image.new('RGBA', (1, 1), (0, 0, 0, 0))
         buffer = io.BytesIO()
@@ -44,9 +48,36 @@ except Exception as e:
     logo_uab = ""
     logo_lei = ""
 
-url = "https://kyrfsylobmsdjlrrpful.supabase.co"
-key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt5cmZzeWxvYm1zZGpscnJwZnVsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDUzNTY4MzEsImV4cCI6MjA2MDkzMjgzMX0.DkPGAw89OH6MPNnCvimfsVJICr5J9n9hcgdgF17cP34"
-supabase: Client = create_client(url, key)
+# Load environment variables
+load_dotenv()
+
+# PostgreSQL connection configuration using SQLAlchemy
+db_host = os.getenv("DB_HOST", "aws-0-eu-west-3.pooler.supabase.com")
+db_port = os.getenv("DB_PORT", 6543)
+db_name = os.getenv("DB_NAME", "postgres")
+db_user = os.getenv("DB_USER", "postgres.kyrfsylobmsdjlrrpful")
+db_password = os.getenv("DB_PASSWORD", "HXU3tLVVXRa1jtjo")
+
+db_url = f"postgresql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}"
+
+# Helper function to get database engine
+@st.cache_resource
+def get_db_engine():
+    return create_engine(db_url)
+
+# Helper function to query database
+def query_table(table_name, columns="*", limit_rows=None):
+    """Query a table from PostgreSQL and return as DataFrame"""
+    try:
+        engine = get_db_engine()
+        query = f"SELECT {columns} FROM public.{table_name}"
+        if limit_rows:
+            query += f" LIMIT {limit_rows}"
+        df = pd.read_sql(query, engine)
+        return df
+    except Exception as e:
+        print(f"Erro ao consultar {table_name}: {e}")
+        return pd.DataFrame()
 
 
 # Definir cores globais consistentes
@@ -192,85 +223,59 @@ st.markdown(f"""
 # --- Carregamento de dados ---
 @st.cache_data
 def carregar_disasters():
-    todos_os_dados = []
-    passo = 1000
-    inicio = 0
+    try:
+        df = query_table("disasters", "id, year, month, type, subtype, date")
+        
+        if df.empty or "type" not in df.columns:
+            print(f"Warning: Disasters dataframe vazio. Total registos: {len(df)}")
+            return pd.DataFrame(columns=["id", "year", "month", "type", "subtype", "date"])
+        
+        df["type"] = df["type"].str.capitalize()
+        df = df[df["type"].isin(["Flood", "Landslide"])]
+        df["year"] = pd.to_numeric(df["year"], errors="coerce")
+        df["month"] = pd.to_numeric(df["month"], errors="coerce")
+        df["date"] = pd.to_datetime(df["date"], errors="coerce")
 
-    while True:
-        response = supabase.table("disasters").select(
-            "id, year, month, type, subtype, date"
-        ).range(inicio, inicio + passo - 1).execute()
-
-        dados_pagina = response.data
-
-        if not dados_pagina:
-            break  # terminou a leitura
-
-        todos_os_dados.extend(dados_pagina)
-        inicio += passo
-
-    df = pd.DataFrame(todos_os_dados)
-
-    df["type"] = df["type"].str.capitalize()
-    df = df[df["type"].isin(["Flood", "Landslide"])]
-    df["year"] = pd.to_numeric(df["year"], errors="coerce")
-    df["month"] = pd.to_numeric(df["month"], errors="coerce")
-    df["date"] = pd.to_datetime(df["date"], errors="coerce")
-
-    return df.dropna(subset=["year", "month", "date"])
+        return df.dropna(subset=["year", "month", "date"])
+    except Exception as e:
+        print(f"Erro ao carregar disasters: {e}")
+        return pd.DataFrame(columns=["id", "year", "month", "type", "subtype", "date"])
 
 @st.cache_data
 def carregar_localizacoes_disasters():
     # Carrega e filtra localizações válidas
-    todos = []
-    passo = 1000
-    inicio = 0
-
-    while True:
-        response = supabase.table("location").select(
-            "id, latitude, longitude, district, municipality"
-        ).range(inicio, inicio + passo - 1).execute()
-
-        dados = response.data
-        if not dados:
-            break
-
-        todos.extend(dados)
-        inicio += passo
-
-    df = pd.DataFrame(todos)
-    df = df[
-        df["latitude"].notna() &
-        df["longitude"].notna() &
-        (df["latitude"] != -999) &
-        (df["longitude"] != -999)
-    ]
-    return df
+    try:
+        df = query_table("location", "id, latitude, longitude, district, municipality")
+        
+        df = df[
+            df["latitude"].notna() &
+            df["longitude"].notna() &
+            (df["latitude"] != -999) &
+            (df["longitude"] != -999)
+        ]
+        return df
+    except Exception as e:
+        print(f"Erro ao carregar localizações: {e}")
+        return pd.DataFrame(columns=["id", "latitude", "longitude", "district", "municipality"])
 
 @st.cache_data
 def carregar_scraper():
-    todos = []
-    passo = 1000
-    inicio = 0
-
-    while True:
-        response = supabase.table("google_scraper_ocorrencias").select(
-            "id, type, year, month, latitude, longitude, district"
-        ).range(inicio, inicio + passo - 1).execute()
-
-        dados = response.data
-        if not dados:
-            break
-
-        todos.extend(dados)
-        inicio += passo
-
-    df = pd.DataFrame(todos)
-    df["type"] = df["type"].str.capitalize()
-    df = df[df["type"].isin(["Flood", "Landslide"])]
-    df["year"] = pd.to_numeric(df["year"], errors="coerce")
-    df["month"] = pd.to_numeric(df["month"], errors="coerce")
-    return df.dropna(subset=["year", "month", "latitude", "longitude"])
+    try:
+        df = query_table("google_scraper_ocorrencias", "id, type, year, month, latitude, longitude, district")
+        
+        # Check if dataframe is empty or missing required columns
+        if df.empty or "type" not in df.columns:
+            print(f"Warning: Scraper dataframe vazio. Total registos: {len(df)}")
+            return pd.DataFrame(columns=["id", "type", "year", "month", "latitude", "longitude", "district"])
+        
+        df["type"] = df["type"].str.capitalize()
+        df = df[df["type"].isin(["Flood", "Landslide"])]
+        df["year"] = pd.to_numeric(df["year"], errors="coerce")
+        df["month"] = pd.to_numeric(df["month"], errors="coerce")
+        return df.dropna(subset=["year", "month", "latitude", "longitude"])
+    except Exception as e:
+        print(f"Erro ao carregar scraper: {e}")
+        return pd.DataFrame(columns=["id", "type", "year", "month", "latitude", "longitude", "district"])
 
 
 # Dicionário com correções conhecidas de nomes de distritos
@@ -307,29 +312,25 @@ df_loc_disasters["district"] = df_loc_disasters["district"].replace(substituir_d
 
 @st.cache_data
 def carregar_human_impacts():
-    todos = []
-    passo = 1000
-    inicio = 0
-
-    while True:
-        response = supabase.table("human_impacts").select(
-            "id, fatalities"
-        ).range(inicio, inicio + passo - 1).execute()
-
-        dados = response.data
-        if not dados:
-            break
-
-        todos.extend(dados)
-        inicio += passo
-
-    return pd.DataFrame(todos)
+    try:
+        df = query_table("human_impacts", "id, fatalities")
+        return df
+    except Exception as e:
+        print(f"Erro ao carregar human_impacts: {e}")
+        return pd.DataFrame(columns=["id", "fatalities"])
 
 
 # --- Carregamento ---
 df_disasters_raw = carregar_disasters()
 df_scraper = carregar_scraper()
-df_disasters = df_disasters_raw.groupby(["year", "month", "type"]).size().reset_index(name="ocorrencias")
+
+# Verificar se df_disasters_raw tem dados e coluna 'type' antes de agrupar
+if df_disasters_raw.empty or "type" not in df_disasters_raw.columns:
+    df_disasters = pd.DataFrame(columns=["year", "month", "type", "ocorrencias"])
+    st.warning("Dados históricos de desastres não disponíveis. Por favor, tente novamente mais tarde.")
+else:
+    df_disasters = df_disasters_raw.groupby(["year", "month", "type"]).size().reset_index(name="ocorrencias")
+
 df_human_impacts = carregar_human_impacts()
 
 
@@ -339,10 +340,13 @@ st.markdown("<h2 style='text-align: center;'>Ocorrências Históricas de Desastr
 
 
 # --- Agrupar dados históricos por mês/tipo ---
-df_disasters_ano_tipo = df_disasters_raw.groupby(["year", "type"]).size().reset_index(name="ocorrencias")
-df_disasters["date"] = pd.to_datetime(
-    df_disasters["year"].astype(str) + "-" + df_disasters["month"].astype(str).str.zfill(2) + "-01"
-)
+if not df_disasters_raw.empty and "type" in df_disasters_raw.columns:
+    df_disasters_ano_tipo = df_disasters_raw.groupby(["year", "type"]).size().reset_index(name="ocorrencias")
+    df_disasters["date"] = pd.to_datetime(
+        df_disasters["year"].astype(str) + "-" + df_disasters["month"].astype(str).str.zfill(2) + "-01"
+    )
+else:
+    df_disasters_ano_tipo = pd.DataFrame(columns=["year", "type", "ocorrencias"])
 
 col1, col2, col3 = st.columns(3)
 
@@ -352,8 +356,11 @@ with col1:
     unsafe_allow_html=True
 )
 
-    df_ano_tipo = df_disasters_raw.groupby(["year", "type"]).size().reset_index(name="ocorrencias")
-    st.dataframe(df_ano_tipo, use_container_width=True)
+    if not df_disasters_raw.empty and "type" in df_disasters_raw.columns:
+        df_ano_tipo = df_disasters_raw.groupby(["year", "type"]).size().reset_index(name="ocorrencias")
+        st.dataframe(df_ano_tipo, use_container_width=True)
+    else:
+        st.warning("Sem dados históricos disponíveis.")
 
 with col2:
     st.markdown(
@@ -361,65 +368,68 @@ with col2:
     unsafe_allow_html=True
 )
 
-    # Merge com impactos humanos e localização
-    df_merged = pd.merge(
-        df_disasters_raw,
-        df_human_impacts[["id", "fatalities"]],
-        on="id",
-        how="left"
-    )
+    if not df_disasters_raw.empty and "type" in df_disasters_raw.columns:
+        # Merge com impactos humanos e localização
+        df_merged = pd.merge(
+            df_disasters_raw,
+            df_human_impacts[["id", "fatalities"]],
+            on="id",
+            how="left"
+        )
 
-    df_merged = pd.merge(
-        df_merged,
-        df_loc_disasters[["id", "district"]],
-        on="id",
-        how="left"
-    )
+        df_merged = pd.merge(
+            df_merged,
+            df_loc_disasters[["id", "district"]],
+            on="id",
+            how="left"
+        )
 
-    # Limpeza
-    df_merged["fatalities"] = pd.to_numeric(df_merged["fatalities"], errors="coerce").fillna(0)
-    df_merged["district"] = df_merged["district"].astype(str).str.strip().str.title()
-    df_merged["type"] = df_merged["type"].str.capitalize()
+        # Limpeza
+        df_merged["fatalities"] = pd.to_numeric(df_merged["fatalities"], errors="coerce").fillna(0)
+        df_merged["district"] = df_merged["district"].astype(str).str.strip().str.title()
+        df_merged["type"] = df_merged["type"].str.capitalize()
 
-    # Remover distritos nulos, vazios, ou 'nan' strings
-    df_merged = df_merged[
-        df_merged["district"].notna() & 
-        (df_merged["district"] != "") & 
-        (df_merged["district"] != "Nan") &
-        (df_merged["district"] != "None") &
-        (df_merged["district"] != "nan")
-    ]
+        # Remover distritos nulos, vazios, ou 'nan' strings
+        df_merged = df_merged[
+            df_merged["district"].notna() & 
+            (df_merged["district"] != "") & 
+            (df_merged["district"] != "Nan") &
+            (df_merged["district"] != "None") &
+            (df_merged["district"] != "nan")
+        ]
 
-    # Agrupar por distrito e tipo
-    df_grouped = df_merged.groupby(["district", "type"])["fatalities"].sum().reset_index()
-    df_grouped = df_grouped[df_grouped["fatalities"] > 0]
+        # Agrupar por distrito e tipo
+        df_grouped = df_merged.groupby(["district", "type"])["fatalities"].sum().reset_index()
+        df_grouped = df_grouped[df_grouped["fatalities"] > 0]
 
-    # Escala do eixo Y com margem de 10%
-    max_fatal = df_grouped["fatalities"].max()
-    y_lim = max_fatal * 1.1
+        # Escala do eixo Y com margem de 10%
+        max_fatal = df_grouped["fatalities"].max()
+        y_lim = max_fatal * 1.1
 
-    chart = alt.Chart(df_grouped).mark_bar().encode(
-        x=alt.X("district:N", title=None, sort="-y"),
-        y=alt.Y("fatalities:Q", title="Nº de Vítimas Mortais", scale=alt.Scale(domain=[0, y_lim])),
-        color=alt.Color(
-            "type:N",
-            title="Tipo",
-            scale=alt.Scale(
-                domain=["Flood", "Landslide"],
-                range=[COR_HEX["Flood"], COR_HEX["Landslide"]]
+        chart = alt.Chart(df_grouped).mark_bar().encode(
+            x=alt.X("district:N", title=None, sort="-y"),
+            y=alt.Y("fatalities:Q", title="Nº de Vítimas Mortais", scale=alt.Scale(domain=[0, y_lim])),
+            color=alt.Color(
+                "type:N",
+                title="Tipo",
+                scale=alt.Scale(
+                    domain=["Flood", "Landslide"],
+                    range=[COR_HEX["Flood"], COR_HEX["Landslide"]]
+                ),
+                legend=alt.Legend(title="type")
             ),
-            legend=alt.Legend(title="type")
-        ),
-        tooltip=["district", "type", "fatalities"]
-    ).properties(
-        height=400,
-        width=600
-    )
+            tooltip=["district", "type", "fatalities"]
+        ).properties(
+            height=400,
+            width=600
+        )
 
-    if df_grouped.empty:
-        st.warning("Sem dados de vítimas mortais disponíveis.")
+        if df_grouped.empty:
+            st.warning("Sem dados de vítimas mortais disponíveis.")
+        else:
+            st.altair_chart(chart, use_container_width=True)
     else:
-        st.altair_chart(chart, use_container_width=True)
+        st.warning("Sem dados de vítimas mortais disponíveis.")
 
 
 
@@ -433,50 +443,56 @@ with col3:
     unsafe_allow_html=True
 )
 
-    df_merge1 = pd.merge(df_disasters_raw, df_loc_disasters, on="id", how="inner")
-    df_merge1 = df_merge1[["latitude", "longitude", "district", "municipality", "year", "month", "type"]].copy()
+    if not df_disasters_raw.empty and "type" in df_disasters_raw.columns:
+        df_merge1 = pd.merge(df_disasters_raw, df_loc_disasters, on="id", how="inner")
+        if not df_merge1.empty:
+            df_merge1 = df_merge1[["latitude", "longitude", "district", "municipality", "year", "month", "type"]].copy()
 
-    # Limpeza de dados
-    df_merge1["district"] = df_merge1["district"].fillna("Desconhecido").astype(str).str.strip().str.title()
-    df_merge1["municipality"] = df_merge1["municipality"].fillna("Desconhecido").astype(str).str.strip().str.title()
-    df_merge1["year"] = df_merge1["year"].fillna(0).astype(int)
-    df_merge1["month"] = df_merge1["month"].fillna(0).astype(int)
-    df_merge1["type"] = df_merge1["type"].astype(str)
-    df_merge1["district"] = df_merge1["district"].replace(substituir_distritos)
+            # Limpeza de dados
+            df_merge1["district"] = df_merge1["district"].fillna("Desconhecido").astype(str).str.strip().str.title()
+            df_merge1["municipality"] = df_merge1["municipality"].fillna("Desconhecido").astype(str).str.strip().str.title()
+            df_merge1["year"] = df_merge1["year"].fillna(0).astype(int)
+            df_merge1["month"] = df_merge1["month"].fillna(0).astype(int)
+            df_merge1["type"] = df_merge1["type"].astype(str)
+            df_merge1["district"] = df_merge1["district"].replace(substituir_distritos)
 
-    tipo_mapa_1 = st.session_state.get("mapa1", "Todos")
-    if tipo_mapa_1 != "Todos":
-        df_merge1 = df_merge1[df_merge1["type"] == tipo_mapa_1]
+            tipo_mapa_1 = st.session_state.get("mapa1", "Todos")
+            if tipo_mapa_1 != "Todos":
+                df_merge1 = df_merge1[df_merge1["type"] == tipo_mapa_1]
 
-    if not df_merge1.empty:
-        fig_map1 = px.scatter_map(
-            df_merge1,
-            lat="latitude",
-            lon="longitude",
-            color="type",
-            hover_name="district",
-            hover_data=["municipality", "year", "month"],
-            zoom=4.5,
-            height=400,
-            center={"lat": 39.5, "lon": -8.0},
-            color_discrete_map={"Flood": COR_HEX["Flood"], "Landslide": COR_HEX["Landslide"]}
-        )
-        fig_map1.update_layout(
-            mapbox_style="stamen-terrain",
-            showlegend=True,
-            margin={"r":0, "t":30, "l":0, "b":0}
-        )
-        st.plotly_chart(fig_map1, use_container_width=True)
+            if not df_merge1.empty:
+                fig_map1 = px.scatter_map(
+                    df_merge1,
+                    lat="latitude",
+                    lon="longitude",
+                    color="type",
+                    hover_name="district",
+                    hover_data=["municipality", "year", "month"],
+                    zoom=4.5,
+                    height=400,
+                    center={"lat": 39.5, "lon": -8.0},
+                    color_discrete_map={"Flood": COR_HEX["Flood"], "Landslide": COR_HEX["Landslide"]}
+                )
+                fig_map1.update_layout(
+                    mapbox_style="stamen-terrain",
+                    showlegend=True,
+                    margin={"r":0, "t":30, "l":0, "b":0}
+                )
+                st.plotly_chart(fig_map1, use_container_width=True)
+            else:
+                st.warning("Sem dados de localização disponíveis.")
+
+            # Filtro de tipo de desastre após o mapa
+            tipo_mapa_1 = st.radio(
+                "Selecionar tipo de desastre (mapa):",
+                ["Todos", "Flood", "Landslide"],
+                horizontal=True,
+                key="mapa1"
+            )
+        else:
+            st.warning("Sem dados de localização disponíveis.")
     else:
-        st.warning("Sem dados de localização disponíveis.")
-
-    # Filtro de tipo de desastre após o mapa
-    tipo_mapa_1 = st.radio(
-        "Selecionar tipo de desastre (mapa):",
-        ["Todos", "Flood", "Landslide"],
-        horizontal=True,
-        key="mapa1"
-    )
+        st.warning("Sem dados históricos disponíveis.")
 
 
 st.markdown("""
@@ -1009,30 +1025,19 @@ df_scraper = carregar_scraper()
 
 # Tabelas adicionais
 def carregar_information_sources():
-    todos = []
-    passo = 1000
-    inicio = 0
-    while True:
-        response = supabase.table("information_sources").select("*").range(inicio, inicio + passo - 1).execute()
-        dados = response.data
-        if not dados:
-            break
-        todos.extend(dados)
-        inicio += passo
-    return pd.DataFrame(todos)
+    try:
+        return query_table("information_sources")
+    except Exception as e:
+        print(f"Erro ao carregar information_sources: {e}")
+        return pd.DataFrame()
 
 def carregar_spatial_ref_sys():
-    todos = []
-    passo = 1000
-    inicio = 0
-    while True:
-        response = supabase.table("spatial_ref_sys").select("*").range(inicio, inicio + passo - 1).execute()
-        dados = response.data
-        if not dados:
-            break
-        todos.extend(dados)
-        inicio += passo
-    return pd.DataFrame(todos)
+    try:
+        # spatial_ref_sys is a system table, skip it if it causes issues
+        return pd.DataFrame()
+    except Exception as e:
+        print(f"Erro ao carregar spatial_ref_sys: {e}")
+        return pd.DataFrame()
 
 df_info_sources = carregar_information_sources()
 df_spatial_ref = carregar_spatial_ref_sys()
