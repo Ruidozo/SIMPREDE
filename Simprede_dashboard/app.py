@@ -52,18 +52,38 @@ except Exception as e:
 load_dotenv()
 
 # PostgreSQL connection configuration using SQLAlchemy
-db_host = os.getenv("DB_HOST", "aws-0-eu-west-3.pooler.supabase.com")
-db_port = os.getenv("DB_PORT", 6543)
-db_name = os.getenv("DB_NAME", "postgres")
-db_user = os.getenv("DB_USER", "postgres.kyrfsylobmsdjlrrpful")
-db_password = os.getenv("DB_PASSWORD", "HXU3tLVVXRa1jtjo")
+# Try to get from Streamlit secrets first, then fall back to environment variables
+try:
+    db_host = st.secrets.get("DB_HOST") or os.getenv("DB_HOST", "aws-0-eu-west-3.pooler.supabase.com")
+    db_port = st.secrets.get("DB_PORT") or os.getenv("DB_PORT", 6543)
+    db_name = st.secrets.get("DB_NAME") or os.getenv("DB_NAME", "postgres")
+    db_user = st.secrets.get("DB_USER") or os.getenv("DB_USER", "postgres.kyrfsylobmsdjlrrpful")
+    db_password = st.secrets.get("DB_PASSWORD") or os.getenv("DB_PASSWORD", "HXU3tLVVXRa1jtjo")
+except Exception as e:
+    print(f"⚠️ Could not load from secrets: {e}, using environment variables")
+    db_host = os.getenv("DB_HOST", "aws-0-eu-west-3.pooler.supabase.com")
+    db_port = os.getenv("DB_PORT", 6543)
+    db_name = os.getenv("DB_NAME", "postgres")
+    db_user = os.getenv("DB_USER", "postgres.kyrfsylobmsdjlrrpful")
+    db_password = os.getenv("DB_PASSWORD", "HXU3tLVVXRa1jtjo")
 
 db_url = f"postgresql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}"
+print(f"📌 Database URL: postgresql://***:***@{db_host}:{db_port}/{db_name}")
 
 # Helper function to get database engine
 @st.cache_resource
 def get_db_engine():
-    return create_engine(db_url)
+    try:
+        engine = create_engine(db_url)
+        # Test connection
+        with engine.connect() as connection:
+            connection.execute("SELECT 1")
+        print(f"✅ Database connection successful!")
+        return engine
+    except Exception as e:
+        print(f"❌ Database connection failed: {e}")
+        st.error(f"Database connection error: {e}")
+        raise
 
 # Helper function to query database
 def query_table(table_name, columns="*", limit_rows=None):
@@ -79,6 +99,7 @@ def query_table(table_name, columns="*", limit_rows=None):
     except Exception as e:
         print(f"❌ Erro ao consultar {table_name}: {e}")
         print(f"   Query: SELECT {columns} FROM public.{table_name}")
+        print(f"   Connection string: postgresql://***:***@{db_host}:{db_port}/{db_name}")
         return pd.DataFrame()
 
 
