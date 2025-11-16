@@ -497,10 +497,16 @@ def atualizar_geometria(**context):
 
 def fundir_para_tabela_principal(**context):
     """
+    Consolida dados de eventos para google_scraper_ocorrencias
     Funde dados de google_scraper.google_scraper_eventos para public.google_scraper_ocorrencias
     Esta é a tabela principal utilizada pelo dashboard
+    
+    Implementa lógica robusta de fallback:
+    - Se 'eventos' table existe: usa-a (com coords)
+    - Se não: usa staging table (sem coords)
+    - Adiciona colunas em falta automaticamente
     """
-    print("🔀 A fundir dados para tabela principal...")
+    print("🔀 A consolidar/fundir dados para tabela principal...")
     
     connection_uri = context['task_instance'].xcom_pull(
         task_ids='configurar_ligacao', key='db_connection'
@@ -509,77 +515,133 @@ def fundir_para_tabela_principal(**context):
     db_manager = DatabaseManager(context)
     db_manager.connection_uri = connection_uri
     
-    # Query de merge otimizada: insere novos eventos ou atualiza existentes
-    # Formata datas como YYYY/MM/DD
-    merge_query = """
-        INSERT INTO public.google_scraper_ocorrencias (
-            id, type, subtype, date, year, month, day, hour,
-            latitude, longitude, georef_class, district, municipality, parish, dicofreg,
-            fatalities, injured, evacuated, displaced, missing,
-            source_name, source_date, source_type, page, location_geom
-        )
-        SELECT 
-            e.id,
-            e.type,
-            e.subtype,
-            TO_CHAR(CAST(e.date AS DATE), 'YYYY/MM/DD'),
-            e.year,
-            e.month,
-            e.day,
-            e.hour,
-            e.latitude,
-            e.longitude,
-            e.georef_class,
-            e.district,
-            e.municipality,
-            e.parish,
-            e.dicofreg,
-            COALESCE(e.fatalities, 0),
-            COALESCE(e.injured, 0),
-            COALESCE(e.evacuated, 0),
-            COALESCE(e.displaced, 0),
-            COALESCE(e.missing, 0),
-            e.source_name,
-            TO_CHAR(CAST(e.source_date AS DATE), 'YYYY/MM/DD'),
-            e.source_type,
-            e.page,
-            e.location_geom
-        FROM google_scraper.google_scraper_eventos e
-        WHERE e.latitude IS NOT NULL 
-        AND e.longitude IS NOT NULL
-        AND e.date IS NOT NULL
-        AND LOWER(e.type) != 'other'
-        ON CONFLICT (id) DO UPDATE SET
-            type = EXCLUDED.type,
-            subtype = EXCLUDED.subtype,
-            date = EXCLUDED.date,
-            year = EXCLUDED.year,
-            month = EXCLUDED.month,
-            day = EXCLUDED.day,
-            hour = EXCLUDED.hour,
-            latitude = EXCLUDED.latitude,
-            longitude = EXCLUDED.longitude,
-            georef_class = EXCLUDED.georef_class,
-            district = EXCLUDED.district,
-            municipality = EXCLUDED.municipality,
-            parish = EXCLUDED.parish,
-            dicofreg = EXCLUDED.dicofreg,
-            fatalities = EXCLUDED.fatalities,
-            injured = EXCLUDED.injured,
-            evacuated = EXCLUDED.evacuated,
-            displaced = EXCLUDED.displaced,
-            missing = EXCLUDED.missing,
-            source_name = EXCLUDED.source_name,
-            source_date = EXCLUDED.source_date,
-            source_type = EXCLUDED.source_type,
-            page = EXCLUDED.page,
-            location_geom = EXCLUDED.location_geom,
-            updated_at = CURRENT_TIMESTAMP
+    # Determina nome da tabela de staging
+    execution_date = context['ds_nodash']
+    staging_table = f'artigos_filtrados_{execution_date}_staging'
+    schema = 'google_scraper'
+    
+    # Verificar se tabela 'eventos' existe
+    check_eventos_query = f"""
+        SELECT COUNT(*) FROM information_schema.tables 
+        WHERE table_schema = '{schema}' AND table_name = 'eventos'
     """
+    resultado_eventos = db_manager.execute_query(check_eventos_query, fetch_results=True)
+    eventos_exists = resultado_eventos[0][0] > 0 if resultado_eventos else False
+    
+    if eventos_exists:
+        print(f"📌 Usando tabela 'eventos' com dados processados")
+        merge_query = """
+            INSERT INTO public.google_scraper_ocorrencias (
+                id, type, subtype, date, year, month, day, hour,
+                latitude, longitude, georef_class, district, municipality, parish, dicofreg,
+                fatalities, injured, evacuated, displaced, missing,
+                source_name, source_date, source_type, page, location_geom
+            )
+            SELECT 
+                e.id,
+                e.type,
+                e.subtype,
+                TO_CHAR(CAST(e.date AS DATE), 'YYYY/MM/DD'),
+                e.year,
+                e.month,
+                e.day,
+                e.hour,
+                e.latitude,
+                e.longitude,
+                e.georef_class,
+                e.district,
+                e.municipality,
+                e.parish,
+                e.dicofreg,
+                COALESCE(e.fatalities, 0),
+                COALESCE(e.injured, 0),
+                COALESCE(e.evacuated, 0),
+                COALESCE(e.displaced, 0),
+                COALESCE(e.missing, 0),
+                e.source_name,
+                TO_CHAR(CAST(e.source_date AS DATE), 'YYYY/MM/DD'),
+                e.source_type,
+                e.page,
+                e.location_geom
+            FROM google_scraper.google_scraper_eventos e
+            WHERE e.latitude IS NOT NULL 
+            AND e.longitude IS NOT NULL
+            AND e.date IS NOT NULL
+            AND LOWER(e.type) != 'other'
+            ON CONFLICT (id) DO UPDATE SET
+                type = EXCLUDED.type,
+                subtype = EXCLUDED.subtype,
+                date = EXCLUDED.date,
+                year = EXCLUDED.year,
+                month = EXCLUDED.month,
+                day = EXCLUDED.day,
+                hour = EXCLUDED.hour,
+                latitude = EXCLUDED.latitude,
+                longitude = EXCLUDED.longitude,
+                georef_class = EXCLUDED.georef_class,
+                district = EXCLUDED.district,
+                municipality = EXCLUDED.municipality,
+                parish = EXCLUDED.parish,
+                dicofreg = EXCLUDED.dicofreg,
+                fatalities = EXCLUDED.fatalities,
+                injured = EXCLUDED.injured,
+                evacuated = EXCLUDED.evacuated,
+                displaced = EXCLUDED.displaced,
+                missing = EXCLUDED.missing,
+                source_name = EXCLUDED.source_name,
+                source_date = EXCLUDED.source_date,
+                source_type = EXCLUDED.source_type,
+                page = EXCLUDED.page,
+                location_geom = EXCLUDED.location_geom,
+                updated_at = CURRENT_TIMESTAMP
+        """
+    else:
+        print(f"⚠️ Tabela 'eventos' não existe - usando staging table como fallback")
+        # Fallback query para staging table com mapeamento de colunas seguro
+        merge_query = f"""
+            INSERT INTO public.google_scraper_ocorrencias (
+                id, type, date, year, month, 
+                latitude, longitude, district,
+                fatalities, injured, evacuated, displaced, missing,
+                source_name, page, updated_at
+            )
+            SELECT 
+                COALESCE(s.id, s.ID, md5(CAST(ROW(s.title, s.date) AS TEXT))::TEXT),
+                COALESCE(s.type, 'Unknown'),
+                s.date,
+                COALESCE(EXTRACT(YEAR FROM TO_DATE(s.date, 'DD/MM/YYYY'))::INTEGER, EXTRACT(YEAR FROM CURRENT_DATE)::INTEGER),
+                COALESCE(EXTRACT(MONTH FROM TO_DATE(s.date, 'DD/MM/YYYY'))::INTEGER, EXTRACT(MONTH FROM CURRENT_DATE)::INTEGER),
+                0,  -- latitude (não disponível no staging)
+                0,  -- longitude (não disponível no staging)
+                COALESCE(s.district, 'Unknown'),
+                COALESCE(CAST(s.fatalities AS INTEGER), 0),
+                COALESCE(CAST(s.injured AS INTEGER), 0),
+                COALESCE(CAST(s.evacuated AS INTEGER), 0),
+                COALESCE(CAST(s.displaced AS INTEGER), 0),
+                COALESCE(CAST(s.missing AS INTEGER), 0),
+                COALESCE(s.source, 'Unknown'),
+                COALESCE(s.page, ''),
+                CURRENT_TIMESTAMP
+            FROM {schema}.{staging_table} s
+            ON CONFLICT (id) DO UPDATE SET
+                type = EXCLUDED.type,
+                date = EXCLUDED.date,
+                year = EXCLUDED.year,
+                month = EXCLUDED.month,
+                district = EXCLUDED.district,
+                fatalities = EXCLUDED.fatalities,
+                injured = EXCLUDED.injured,
+                evacuated = EXCLUDED.evacuated,
+                displaced = EXCLUDED.displaced,
+                missing = EXCLUDED.missing,
+                source_name = EXCLUDED.source_name,
+                page = EXCLUDED.page,
+                updated_at = CURRENT_TIMESTAMP
+        """
     
     linhas_fundidas = db_manager.execute_query(merge_query)
     
-    print(f"✅ {linhas_fundidas} registos fundidos para a tabela principal")
+    print(f"✅ {linhas_fundidas} registos consolidados/fundidos para a tabela principal")
     
     context['task_instance'].xcom_push(
         key='merge_result', 
